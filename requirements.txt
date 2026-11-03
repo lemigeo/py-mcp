@@ -1,0 +1,5 @@
+mcp[cli]
+pymysql
+anthropic
+python-dotenv
+cryptography
