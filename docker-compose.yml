@@ -1,0 +1,23 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: py-mcp-mysql
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4406:3306"   # 루프백에만 바인딩. 외부에 노출하지 않는다.
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: mcp
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+    volumes:
+      - ./mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s

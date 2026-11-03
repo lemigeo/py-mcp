@@ -1,0 +1,5 @@
+mysql-data
+.env
+.venv
+__pycache__
+CLAUDE.md
