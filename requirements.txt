@@ -3,3 +3,5 @@ pymysql
 anthropic
 python-dotenv
 cryptography
+starlette
+uvicorn

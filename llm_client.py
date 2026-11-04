@@ -55,6 +55,7 @@ class ClaudeClient:
             "description": "분류 결과를 기록한다.",
             "input_schema": schema,
         }
+        db.log.debug("llm[claude] model=%s system_chars=%d input=%r", self.model, len(system), text[:200])
         resp = self._client.messages.create(
             model=self.model,
             max_tokens=512,
@@ -63,7 +64,9 @@ class ClaudeClient:
             tool_choice={"type": "tool", "name": "submit_result"},
             messages=[{"role": "user", "content": text}],
         )
-        return next((b.input for b in resp.content if b.type == "tool_use"), {})
+        out = next((b.input for b in resp.content if b.type == "tool_use"), {})
+        db.log.debug("llm[claude] usage=%s output=%s", getattr(resp, "usage", None), out)
+        return out
 
 
 class OllamaClient:
@@ -80,12 +83,14 @@ class OllamaClient:
             "model": self.model,
             "stream": False,
             "format": schema,
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, **({"num_ctx": int(os.environ["OLLAMA_NUM_CTX"])} if os.environ.get("OLLAMA_NUM_CTX") else {})},
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": text},
             ],
         }
+        db.log.debug("llm[ollama] host=%s model=%s system_chars=%d input=%r options=%s",
+                     self.host, self.model, len(system), text[:200], body["options"])
         req = urllib.request.Request(
             f"{self.host}/api/chat",
             data=json.dumps(body).encode("utf-8"),
@@ -94,8 +99,16 @@ class OllamaClient:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 payload = json.load(r)
-        except urllib.error.URLError as e:
+        except TimeoutError as e:  # 모델 로딩/긴 프롬프트로 응답이 늦을 때 (urlopen 타임아웃은 URLError가 아니다)
+            raise LLMError(
+                f"Ollama({self.host}, model={self.model}) 응답 시간 초과({self.timeout:.0f}s). "
+                "모델이 로딩 중이거나 프롬프트가 길 수 있습니다. OLLAMA_TIMEOUT을 늘리거나 `ollama run <model>`로 미리 로드하세요."
+            ) from e
+        except (urllib.error.URLError, OSError) as e:
             raise LLMError(f"Ollama({self.host}) 호출 실패: {e}") from e
+        # prompt_eval_count가 num_ctx(기본 2048~4096)에 가깝거나 같으면 프롬프트가 잘렸을 가능성이 크다
+        db.log.debug("llm[ollama] prompt_eval_count=%s eval_count=%s content=%r",
+                     payload.get("prompt_eval_count"), payload.get("eval_count"), (payload.get("message") or {}).get("content"))
         try:
             return json.loads(payload["message"]["content"])
         except (KeyError, TypeError, json.JSONDecodeError) as e:

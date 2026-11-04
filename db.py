@@ -18,7 +18,9 @@ except ImportError:
     pass
 
 # stdio MCP 서버는 stdout이 프로토콜 채널이므로 로그는 반드시 stderr로 보낸다.
-logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+# LOG_LEVEL=DEBUG 로 LLM 프롬프트/응답 등 상세 로그를 켠다 (stderr 출력이라 MCP stdio 통신을 방해하지 않는다)
+logging.basicConfig(stream=sys.stderr, level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO),
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("py-mcp")
 
 MAX_ROWS = 100
