@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>상품 검색 · 추천</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --text:#1d1d1b; --muted:#6b6b66; --line:#e4e4df; --accent:#1f6feb; --warn-bg:#fff4e0; --warn:#8a5300; --ok:#1a7f4b; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161615; --card:#201f1e; --text:#ecebe8; --muted:#a3a29c; --line:#34332f; --accent:#6aa3ff; --warn-bg:#3a2d15; --warn:#f0c27a; --ok:#6fd49b; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,"Noto Sans KR",sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  h2 { font-size:16px; margin:28px 0 4px; }
+  form { display:grid; grid-template-columns:1fr auto; gap:8px; }
+  form .row { grid-column:1 / -1; display:flex; gap:8px; flex-wrap:wrap; align-items:center; color:var(--muted); font-size:14px; }
+  input, select, button { font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); }
+  input[type=search] { min-width:0; }
+  button { cursor:pointer; background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.secondary { background:var(--card); color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  .msg { background:var(--warn-bg); color:var(--warn); border-radius:8px; padding:10px 12px; margin:12px 0 0; font-size:14px; }
+  .error { background:#fde7e7; color:#8f1d1d; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 0; }
+  .chip { border:1px solid var(--line); border-radius:999px; padding:2px 10px; font-size:13px; color:var(--muted); background:var(--card); }
+  ul.items { list-style:none; padding:0; margin:8px 0 0; display:grid; gap:8px; }
+  ul.items li { display:flex; justify-content:space-between; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .score { color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .sub { color:var(--muted); font-size:14px; margin:0; }
+  .ok { color:var(--ok); }
+  section.nearby { border-top:1px solid var(--line); margin-top:28px; padding-top:4px; }
+  .more { margin-top:12px; }
+  .empty { color:var(--muted); margin-top:12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>상품 검색 · 추천</h1>
+  <form id="f">
+    <input type="search" id="q" placeholder="예: 오사카 / 출출한데 먹을 거" maxlength="200" required autofocus>
+    <button type="submit" id="go">검색</button>
+    <div class="row">
+      <label>방식
+        <select id="mode">
+          <option value="recommend">추천 검색 (AI가 카테고리 유추 + 근처 맑은 지역)</option>
+          <option value="keyword">키워드 검색 (이름 매칭)</option>
+        </select>
+      </label>
+      <label>날짜 <input type="date" id="date"></label>
+      <span>비우면 최근 7일 날씨 기준</span>
+    </div>
+  </form>
+  <div id="out"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const out = $("out");
+let state = null; // 마지막 검색 조건
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text; // textContent만 사용 (HTML 삽입 없음)
+  return e;
+}
+
+function itemList(items) {
+  const ul = el("ul", "items");
+  for (const it of items) {
+    const li = el("li");
+    li.append(el("span", "", it.name), el("span", "score", "점수 " + Number(it.score).toFixed(2)));
+    ul.append(li);
+  }
+  return ul;
+}
+
+function render(data, append) {
+  if (!append) out.replaceChildren();
+  const old = out.querySelector(".more");
+  if (old) old.remove();
+
+  if (!append) {
+    for (const m of data.messages || []) out.append(el("div", "msg", m));
+    if ((data.matched_categories || []).length) {
+      const chips = el("div", "chips");
+      for (const c of data.matched_categories) chips.append(el("span", "chip", c.name + " (" + c.en_name + ")"));
+      out.append(chips);
+    }
+  }
+
+  let list = out.querySelector("ul.items.main");
+  if (!list && (data.items || []).length) {
+    out.append(el("h2", "", "검색 결과"));
+    list = itemList([]); list.classList.add("main"); out.append(list);
+  }
+  if (list) for (const li of itemList(data.items || []).children) list.append(li.cloneNode(true));
+
+  if (data.has_more) {
+    const b = el("button", "secondary more", "다음 5개");
+    b.onclick = () => run(state.page + 1, true);
+    out.append(b);
+  }
+
+  if (!append && data.nearby) {
+    const sec = el("section", "nearby");
+    sec.append(el("h2", "", "근처 맑은 지역의 상품"));
+    sec.append(el("p", "sub", "반경 " + data.nearby.radius_km + "km 이내에서 맑은 날이 있는 지역입니다."));
+    if (data.nearby.message) sec.append(el("p", "empty", data.nearby.message));
+    for (const r of data.nearby.regions || []) {
+      sec.append(el("h2", "", r.category.name + " · " + r.category.distance_km + "km"));
+      const w = r.weather;
+      sec.append(el("p", "sub ok", "맑은 날 " + w.clear_days + "/" + w.total_days + "일 (" + w.period[0] + (w.period[0] === w.period[1] ? "" : " ~ " + w.period[1]) + ")"));
+      sec.append(itemList(r.items));
+    }
+    out.append(sec);
+  }
+}
+
+async function run(page, append) {
+  const q = $("q").value.trim();
+  if (!append) state = { q, mode: $("mode").value, date: $("date").value };
+  state.page = page;
+  const params = new URLSearchParams({ q: state.q, mode: state.mode, page: String(page) });
+  if (state.date) params.set("date", state.date);
+  $("go").disabled = true;
+  try {
+    const res = await fetch("/api/search?" + params);
+    const data = await res.json();
+    if (!res.ok) { if (!append) out.replaceChildren(); out.append(el("div", "msg error", data.error || "오류가 발생했습니다.")); return; }
+    render(data, append);
+    if (!append && !(data.items || []).length && !(data.messages || []).length) out.append(el("p", "empty", "결과가 없습니다."));
+  } catch (e) {
+    out.replaceChildren(el("div", "msg error", "서버에 연결할 수 없습니다."));
+  } finally {
+    $("go").disabled = false;
+  }
+}
+
+$("f").addEventListener("submit", (e) => { e.preventDefault(); run(1, false); });
+</script>
+</body>
+</html>

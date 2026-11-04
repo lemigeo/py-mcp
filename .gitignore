@@ -3,3 +3,6 @@ mysql-data
 .venv
 __pycache__
 CLAUDE.md
+sql/fill_coordinates.sql
+.vscode
+docs
