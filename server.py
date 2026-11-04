@@ -7,10 +7,14 @@
 """
 import re
 
-from mcp.server.fastmcp import FastMCP
+try:  # mcp 2.x
+    from mcp.server.mcpserver import MCPServer as FastMCP
+except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP
 
 import db
 import recommend as rec
+import weather
 
 mcp = FastMCP("py-mcp")
 
@@ -40,7 +44,7 @@ def describe_table(table: str) -> list[dict]:
 
 @mcp.tool()
 def list_categories() -> list[dict]:
-    """상품 카테고리 전체(id, parent_id, name, en_name)를 반환한다. 사용자 요청에 맞는 카테고리를 고를 때 먼저 호출할 것."""
+    """사용 가능한 카테고리(id, parent_id, name, en_name, latitude, longitude)를 반환한다. 최상위(parent_id가 NULL) 카테고리는 제외된다. 사용자 요청에 맞는 카테고리를 고를 때 먼저 호출할 것."""
     return rec.list_categories()
 
 
@@ -56,13 +60,49 @@ def get_products_by_categories(category_ids: list[int], page: int = 1) -> dict:
 
 
 @mcp.tool()
-def recommend_products(text: str, page: int = 1) -> dict:
-    """사용자 텍스트에서 AI가 카테고리(1개 이상)를 유추해 상품을 score 내림차순으로 5개씩 추천한다.
+def search_products(keyword: str, page: int = 1, date: str = "") -> dict:
+    """키워드 검색: 이름(한글/영문)에 키워드가 포함된 카테고리의 상품을 score 내림차순으로 5개씩 반환한다. AI 호출 없음.
 
+    카테고리에 상품이 있으면 보여주고, 그 지역에 맑은 날이 없으면 messages에 안내가 들어간다.
+    date(YYYY-MM-DD)가 있으면 그날, 없으면 최근 7일의 날씨가 근거다. 최상위 카테고리는 쓰지 않는다.
+    """
+    return rec.search_by_keyword(keyword, page, date.strip() or None)
+
+
+@mcp.tool()
+def recommend_products(text: str, page: int = 1, date: str = "") -> dict:
+    """추천 검색: 사용자 텍스트에서 AI가 카테고리(1개 이상)를 유추해 상품을 score 내림차순으로 5개씩 반환한다.
+
+    1페이지에는 nearby가 함께 온다: 찾은 지역과 좌표가 가까운 다른 카테고리 중 맑은 날이 있는 지역의 상품이며
+    본 결과와 구분해서 보여줄 것. 찾은 지역에 맑은 날이 없으면 messages에 안내가 들어간다.
     서버에 LLM 설정(LLM_PROVIDER 등)이 되어 있어야 한다. 호출하는 쪽 모델이 직접 카테고리를 고를 수 있으면
     list_categories + get_products_by_categories 조합을 쓰는 편이 더 저렴하다.
     """
-    return rec.recommend(text, page)
+    return rec.recommend(text, page, date.strip() or None)
+
+
+@mcp.tool()
+def get_weather(latitude: float, longitude: float, date: str = "") -> dict:
+    """좌표의 날씨와 '맑은 정도'(0~1, 높을수록 맑음)를 반환한다.
+
+    date(YYYY-MM-DD)를 주면 그날의 날씨를 근거로 하고, 비우면 최근 7일(어제까지)의 데이터를 근거로 한다.
+    date가 조회 가능 범위(과거 92일~오늘 포함 16일) 밖이면 최근 7일로 대체하며 note에 이유가 적힌다.
+    basis/period로 어떤 기간을 근거로 했는지 확인할 수 있다. average_clearness는 서버가 일조 비율과
+    강수확률로 계산한 값이므로 모델이 다시 계산하지 말고 그대로 사용할 것.
+    """
+    return weather.get_weather(latitude, longitude, date.strip() or None)
+
+
+@mcp.tool()
+def filter_regions_by_weather(regions: list[dict], date: str = "") -> dict:
+    """지역 후보를 날씨로 걸러낸다. 맑은 날이 하나도 없는 지역은 excluded로 빠지고 추천에서 제외해야 한다.
+
+    regions: [{"name": "Osaka", "latitude": 34.69, "longitude": 135.50}, ...] (최대 10개).
+    date(YYYY-MM-DD)가 있으면 그날, 없으면 최근 7일의 데이터가 근거다 (get_weather와 동일).
+    '맑은 날'은 강수확률 70% 미만이고 비/눈/뇌우/안개가 아닌 날이다.
+    recommended는 맑은 정도 높은 순, failed는 조회 실패라 판단 불가인 지역이므로 추천하지 말고 별도로 알릴 것.
+    """
+    return weather.filter_regions(regions, date.strip() or None)
 
 
 _FORBIDDEN = re.compile(
